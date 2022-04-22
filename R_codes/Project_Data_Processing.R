@@ -31,7 +31,7 @@ library(dplyr)
 #########################################################################
 
 #Saving Directory
-s_dir = '../results'
+s_dir = '../results_3'
 dir.create(s_dir, showWarnings = F)
 
 #########################################################################
@@ -153,6 +153,25 @@ for(var_pos in 1:length(variables)){
   tmap::tmap_save(t, file.path(point_map_dir, paste0(var_press, '_Point_Map.png')))
 
 
+  #Map title
+  map_title = paste0('Sampling Points')
+
+  #Create map directory
+  point_map_dir = file.path(s_dir, 'Point_Data')
+  dir.create(point_map_dir, showWarnings = F)
+
+  #Plot a map with both information
+  t = tmap::tm_shape(soilsamples_6, bbox = sf::st_bbox(sf::st_buffer(field_boundary, 100))) +
+    tmap::tm_dots(border.col = 'transparent', size = 0.3, col = 'blue') +
+    tm_text("SampleID", size = 0.8, ymod = 0.5)+
+    tmap::tm_layout(map_title, asp =1.2, frame = FALSE, legend.show = T, title.position = c("left", "top"))+
+    tmap::tm_shape(field_boundary) + tmap::tm_borders(lwd = 2)+
+    tmap::tm_compass(position = c("right", "top"), size = 3) +
+    tmap::tm_scale_bar(width = 0.2, position = c("right", "bottom"), text.size  = 0.7)
+
+  tmap::tmap_save(t, file.path(point_map_dir, 'sampling_Location.png'))
+
+
   #Box-cox transformation
 
   #Run statistical test to know if normal or not
@@ -208,6 +227,9 @@ for(var_pos in 1:length(variables)){
     if(krig_type == 'UK'){
       var_data$x = st_coordinates(var_data)[,1]
       var_data$y = st_coordinates(var_data)[,2]
+
+      grd$x = st_coordinates(grd)[,1]
+      grd$y = st_coordinates(grd)[,2]
     }
 
     #trend<-krige(formula_, var_data, grd, model=NULL)
@@ -218,6 +240,7 @@ for(var_pos in 1:length(variables)){
     # }else{
     #   max_dst = sqrt(as.numeric(st_area(field_boundary)))
     # }
+
 
     #Set the gstat object with the data, formula and max distance for variogram
     gOK = gstat::gstat(NULL,var, formula_, var_data, maxdist = max_dst)
@@ -331,10 +354,17 @@ for(var_pos in 1:length(variables)){
           results_df$fold = cv_kr$fold
         }
 
-
         #Linear Regression for observed vs. predicted
-        t = lm(Predicted~Observed, results_df)
+        t = lm(Observed~Predicted, results_df)
         stats_ = summary(t)
+
+        # ggplot(results_df, aes(x=Observed, y= Predicted)) +
+        #   geom_point() +
+        #   geom_abline(intercept=0, slope=1) +
+        #   labs(x='Predicted Values', y='Actual Values', title='Predicted vs. Actual Values')+
+        #   geom_smooth(method = "lm", se = FALSE)+
+        #   stat_regline_equation(label.x = 3, label.y = 32)+
+        #   expand_limits(x = 0, y = 0)
 
         Slope = stats_$coefficients[2,1]
         Intercept = stats_$coefficients[1,1]
@@ -359,7 +389,7 @@ for(var_pos in 1:length(variables)){
         Fold_RMSE = results_df %>%
           group_by(fold) %>%
           summarise(RMSE = sqrt(mean(SErr, na.rm =T)))
-        RMSE_r = mean(Fold_RMSE$RMSE)
+        RMSE_r = sqrt(mean(results_df$SErr))
 
         #Calculate MAPE
         results_df$APE = abs((results_df$Observed - results_df$Predicted)/results_df$Observed)*100
@@ -376,6 +406,8 @@ for(var_pos in 1:length(variables)){
         #Save analysis and df
         results_l[[var]][['Analysis']][[paste0(krig_type, '_Max_', local_)]] = analysis
         results_l[[var]][['CV_df']][[paste0(krig_type, '_Max_', local_)]] = results_df
+
+
 
         #Krigging
         K = krige(locations = var_data, formula = formula_, model = m, newdata = grd, nmax = local_)
@@ -410,12 +442,17 @@ for(var_pos in 1:length(variables)){
         #Clip to field boundary
         K_pol = st_intersection(K_pol, st_geometry(field_boundary))
 
+        test = st_intersection(K_pol, var_data)
+
+        RMSE_rr = mean(sqrt((test$AL_M3-test$AL_M3.1)^2))
+
         #Set map name
         map_title = paste0('Sample Results ', krig_type, ': ', gsub('_', ' ', var_press), '\nMax: ', local_)
 
         #Get legend names
-        qq = quantile(st_drop_geometry(K_pol)[,var], c(0.20, 0.4, 0.6, 0.8))
+        qq = quantile(as.numeric(as.data.frame(st_drop_geometry(soilsamples_6))[,var]), c(0.20, 0.4, 0.6, 0.8))
 
+        soilsamples_6[,var] = as.numeric(as.data.frame(st_drop_geometry(soilsamples_6))[,var])
         #Plot map
         t = tmap::tm_shape(K_pol, bbox = sf::st_bbox(sf::st_buffer(field_boundary, 100))) +
           tmap::tm_polygons(var, n = 5, style = "fixed", breaks = c(-Inf, qq[1], qq[2], qq[3], qq[4], Inf), palette = tmaptools::get_brewer_pal("RdYlGn", n = 5, plot = F), border.col = 'transparent', size = 0.06,  title = gsub('_', ' ', var_press)) +
